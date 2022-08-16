@@ -1,5 +1,4 @@
 import os
-import argparse
 import gym
 import pickle
 import numpy as np
@@ -10,13 +9,14 @@ from gym import spaces
 import random
 
 from gnn_executor.sparse_models import SparseMPNN, SparseMessagePassing
-from rl.ppo import XLVINPolicy, PPO, gather_rollout
-from utils import get_arguments, make_vec_envs, test_vec_envs
+from rl.ppo import XLVINPolicy, PPO, gather_rollout, gather_fixed_ep_rollout
+from rl.envs import make_vec_envs
+from utils import get_arguments
 from TransE.cartpole_main import train_transe
 from TransE.mountaincar_main import train_transe
 
 def evaluate_step_batch(env_type, reward, done):
-    if env_type in ['cartpole', 'mountaincar', 'acrobot']:
+    if env_type in ['cartpole', 'mountaincar', 'acrobot', 'lunarlander']:
         passed = torch.sum(reward)
         done_ep = torch.sum(torch.tensor(done, device=args.device))
     return done_ep, passed
@@ -30,19 +30,19 @@ def run_fixed_nb_episodes(env, policy, level, rollout, exp_config_file, nb_episo
     while ep < nb_episodes:
         with torch.no_grad():
             if env_type in ['cartpole', 'mountaincar', 'acrobot',
-                    'mini', 'mini-avoid', 'mini-hunt', 'mini-ambush', 'mini-rush']:
+                    'mini', 'mini-avoid', 'mini-hunt', 'mini-ambush', 'mini-rush', 'lunarlander']:
                 deterministic = True
             else:
                 raise NotImplementedError
             value, action, log_probs = policy.act(obs.to(args.device), deterministic=deterministic)
-        obs, reward, done, solved_obs = env.step(action)
+        obs, reward, done, solved_obs = env.step(action.squeeze(-1))
         reward = torch.tensor(reward, device=args.device)
 
         done_ep, passed_metric = evaluate_step_batch(env_type=env_type, reward=reward, done=done)
         ep += done_ep
         all_passed += passed_metric
 
-    if env_type in ['cartpole', 'mountaincar', 'acrobot']:
+    if env_type in ['cartpole', 'mountaincar', 'acrobot', 'lunarlander']:
         print("Rollout {} : Number of steps passed {:.3f} from total episodes {} (perc {:.3f})".format(
             rollout, all_passed, ep, (all_passed * 1.0) / (ep * 1.0)))
         print("Rollout {} : Number of steps passed {:.3f} from total episodes {} (perc {:.3f})".format(
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     if args.model == 'XLVIN':
         if args.env_type == 'cartpole':
             from TransE.cartpole_main import CartPoleTransE as TransE
-        elif args.env_type == 'mountaincar':
+        elif args.env_type == 'mountaincar' or args.env_type == 'lunarlander':
             from TransE.mountaincar_main import MountainCarTransE as TransE
 
         transe_model = TransE(embedding_dim=args.transe_embedding_dim, hidden_dim=args.transe_hidden_dim,
@@ -102,8 +102,9 @@ if __name__ == '__main__':
             if args.load_model_path is not None:
                 gnn_model.load_state_dict(checkpoint['gnn_model'])
             elif args.gnn_weights_path is not None:
-                gnn_model.load_state_dict(torch.load(os.path.join(args.gnn_weights_path, 'mpnn.pt'),
-                                                     map_location=args.device))
+                path = os.path.join(args.gnn_weights_path, 'mpnn.pt')
+                print(f"Load gnn_weights: {os.path.join(args.gnn_weights_path, 'mpnn.pt')}")
+                gnn_model.load_state_dict(torch.load(path, map_location=args.device))
             elif args.env_type in ['cartpole', 'mountaincar', 'acrobot']:
                 gnn_model.load_state_dict(
                     torch.load('./gnn_executor/trained_model/results' + 'cartpole' + '_' + str(args.gnn_steps) +
@@ -176,27 +177,35 @@ if __name__ == '__main__':
         train_indices = {0 : 'N/A'}
         for length in sorted(train_indices.keys()):
             curriculum_train_indices = ['N/A']
+            env_type2env_name = {'mountaincar': 'MountainCar-v0', 'lunarlander': 'LunarLander-v2'}
+            env = make_vec_envs(
+                env_name=env_type2env_name[args.env_type], seed=random.randint(0, 2 ** 32), num_processes=args.num_processes, gamma=None,
+                log_dir=None, device=args.device, allow_early_resets=True)
 
-            env = make_vec_envs(maze_size=args.train_maze_size, train_maze=True,
-                                maze_indices_list=curriculum_train_indices,
-                                device=args.device,
-                                num_processes=args.num_processes,
-                                env_type=args.env_type,
-                                explode_maze=args.explode_maze)
+            test_curriculum_lvl_env = make_vec_envs(
+                env_name=env_type2env_name[args.env_type], seed=random.randint(0, 2 ** 32), num_processes=args.num_processes, gamma=None,
+                log_dir=None, device=args.device, allow_early_resets=True)
 
-            test_curriculum_lvl_env = make_vec_envs(maze_size=args.train_maze_size, train_maze=True,
-                                                    maze_indices_list=list(train_indices[length]),
-                                                    device=args.device,
-                                                    num_processes=args.num_processes,
-                                                    env_type=args.env_type,
-                                                    fail_on_repeated_state=False,
-                                                    explode_maze=args.explode_maze)
+            # env = make_vec_envs(maze_size=args.train_maze_size, train_maze=True,
+            #                     maze_indices_list=curriculum_train_indices,
+            #                     device=args.device,
+            #                     num_processes=args.num_processes,
+            #                     env_type=args.env_type,
+            #                     explode_maze=args.explode_maze)
+            #
+            # test_curriculum_lvl_env = make_vec_envs(maze_size=args.train_maze_size, train_maze=True,
+            #                                         maze_indices_list=list(train_indices[length]),
+            #                                         device=args.device,
+            #                                         num_processes=args.num_processes,
+            #                                         env_type=args.env_type,
+            #                                         fail_on_repeated_state=False,
+            #                                         explode_maze=args.explode_maze)
 
             done = False
             all_ep = 0
             all_passed = 0
             for j in range(args.num_rollouts):
-                if args.env_type in ['cartpole', 'mountaincar', 'acrobot', 'sokoban', 'freeway', 'enduro']:
+                if args.env_type in ['cartpole', 'mountaincar', 'acrobot', 'sokoban', 'freeway', 'enduro', 'lunarlander']:
                     rollouts = gather_fixed_ep_rollout(env=env, policy=policy, num_episodes=args.num_train_episodes,
                                                        gamma=args.gamma,
                                                        num_processes=args.num_processes,
@@ -204,6 +213,7 @@ if __name__ == '__main__':
            
                 for k in range(args.ppo_updates):
                     value_loss_epoch, action_loss_epoch, dist_entropy_epoch, transe_loss_epoch = ppo.update(rollouts)
+                    print(f'value_loss: {value_loss_epoch}, pg_loss: {action_loss_epoch}, ent_loss: {dist_entropy_epoch}, transe_loss: {transe_loss_epoch}')
                     if args.retrain_transe:
                         train_transe(transe=transe_model, optimizer=optimizer, num_episodes=args.num_train_episodes,
                                      exp_config_file=exp_config_file,

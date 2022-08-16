@@ -1,5 +1,5 @@
 import torch
-from gnn_executor.graph_types import *
+from graph_types import *
 
 
 def build_mask_given_graph_type(num_actions, graph_type_fn, num_states, seed=None, degree=None):
@@ -15,6 +15,8 @@ def build_mask_given_graph_type(num_actions, graph_type_fn, num_states, seed=Non
             adj = nx.adjacency_matrix(graph_type_fn(num_states, seed)).todense()
         elif graph_type_fn in states:
             adj = nx.adjacency_matrix(graph_type_fn(num_states)).todense()
+        else:
+            raise ValueError(f'Unexpected graph_type_fn: {graph_type_fn}')
         p_a += [torch.Tensor(adj)]
     p = torch.stack(p_a, dim=0)
     return p

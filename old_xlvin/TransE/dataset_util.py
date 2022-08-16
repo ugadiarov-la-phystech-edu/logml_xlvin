@@ -1,7 +1,6 @@
 from tqdm import tqdm
 import numpy as np
 import torch
-import h5py
 import os
 import random
 

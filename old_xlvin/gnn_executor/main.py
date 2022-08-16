@@ -131,9 +131,9 @@ parser.add_argument('--epsilon', type=float, default=1e-4, help='termination con
                                                                 'consecutive values)')
 
 parser.add_argument('--hidden_dim', type=int, default=None, help='Hidden dim for node/edge')
-parser.add_argument('--message_function', type=str, default=None)
-parser.add_argument('--message_function_depth', type=int, default=None)
-parser.add_argument('--neighbour_state_aggr', type=str, default=None)
+parser.add_argument('--message_function', type=str, default='mpnn')
+parser.add_argument('--message_function_depth', type=int, default=1)
+parser.add_argument('--neighbour_state_aggr', type=str, default='sum')
 parser.add_argument('--gnn_steps', type=int, default=1, help="How many GNN propagation steps are applied ")
 
 parser.add_argument('--action_aggr', type=str, default='max')
@@ -251,7 +251,7 @@ if args.test_graph_type == 'cartpole':
 
 while test_loop:
     if args.test_graph_type not in ['maze8', 'maze16', 'maze28', 'cartpole', 'freeway']:
-        if test_step < len(args.test_graph_type):
+        if test_step < len(args.test_state_action_tuple):
             sa_pair = args.test_state_action_tuple[test_step]
             print("State-action ", sa_pair)
             states, actions = sa_pair

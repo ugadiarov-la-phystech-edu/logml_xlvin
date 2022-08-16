@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
-from TransE.create_graph import create_graph_v2
+from old_xlvin.TransE.create_graph import create_graph_v2
 
 
 def _flatten_helper(T, N, _tensor):
@@ -445,9 +445,11 @@ class PPO():
                 self.optimizer.zero_grad()
                 loss = value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef
                 if self.transe_loss_coef > 0.:
+                    # transe_loss = self.transe_loss_coef * \
+                    #               self.actor_critic.transe.transition_loss(obs_batch, actions_batch.squeeze(-1), solved_obs_batch,
+                    #                       self.transe_detach)
                     transe_loss = self.transe_loss_coef * \
-                                  self.actor_critic.transe.transition_loss(obs_batch, actions_batch.squeeze(-1), solved_obs_batch,
-                                          self.transe_detach)
+                                  self.actor_critic.transe.contrastive_loss(obs_batch, actions_batch.squeeze(-1), solved_obs_batch)
                     loss += transe_loss
                     transe_loss_epoch += transe_loss.item()
 
@@ -491,7 +493,7 @@ def gather_rollout(env, policy, num_steps, gamma, num_processes, device, determi
         with torch.no_grad():
             value, action, log_probs = policy.act(rollouts.obs[step].to(device), deterministic=deterministic)
         # env.render()
-        obs, reward, done, solved_obs = env.step(action)
+        obs, reward, done, solved_obs = env.step(action.squeeze(-1))
         reward = torch.tensor(reward)
         mask = ~ torch.tensor(done).unsqueeze_(-1)
         if have_solved_state:
@@ -531,7 +533,7 @@ def gather_fixed_ep_rollout(env, policy, num_episodes, gamma, num_processes, dev
         with torch.no_grad():
             value, action, log_probs = policy.act(all_obs[-1].to(device), deterministic=deterministic)
         # env.render()
-        obs, reward, done, _ = env.step(action)
+        obs, reward, done, _ = env.step(action.squeeze(-1))
         done_ep += torch.sum(torch.tensor(done))
 
         reward = torch.tensor(reward)
@@ -562,6 +564,15 @@ def gather_fixed_ep_rollout(env, policy, num_episodes, gamma, num_processes, dev
     rollouts.masks = torch.cat((torch.zeros_like(all_masks[0]).unsqueeze(0), torch.stack(all_masks, dim=0)), dim=0)
 
     rollouts.solved_obs = torch.stack(all_next_obs, dim=0)
+
+    print("Returns:", rollouts.rewards.squeeze(-1).sum(0))
+    action_counts = torch.zeros(env.action_space.n, rollouts.actions.shape[1])
+    for i in range(rollouts.actions.shape[1]):
+        for action, count in zip(*torch.unique(rollouts.actions.squeeze(-1)[:, i], return_counts=True)):
+            action_counts[action, i] = count
+
+    action_counts /= action_counts.sum(0)
+    print("Actions counts:\n", torch.transpose(action_counts, 0, 1))
 
     with torch.no_grad():
         next_value = policy.get_value(rollouts.obs[-1].to(rollouts.device)).detach()
